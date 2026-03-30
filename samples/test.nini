@@ -1,0 +1,4 @@
+nombre = "Ricky"
+class Usuario
+  fn saludar()
+    print("Hola")

@@ -1,0 +1,9 @@
+[package]
+name = "nini-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nini-compiler = { path = "../nini-compiler" }
+tiny_http = "0.12"
+open = "5.0"

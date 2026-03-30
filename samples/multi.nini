@@ -1,0 +1,5 @@
+class Usuario
+  fn saludar()
+
+class Producto
+  fn describir()

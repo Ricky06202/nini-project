@@ -1,0 +1,17 @@
+/target/
+**/*.rs.bk
+*.swp
+*.swo
+# Built files
+dist/
+# IDE
+.vscode/
+.idea/
+# OS
+.DS_Store
+Thumbs.db
+# Dependencies
+node_modules/
+# Environment
+.env
+.env.local

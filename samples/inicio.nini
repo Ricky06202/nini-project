@@ -1,0 +1,6 @@
+clics = 0
+class Contador
+  fn incrementar()
+    clics.value = clics.value + 1
+  html:
+    <span>Contador: {clics}</span>

@@ -1,0 +1,33 @@
+<script>
+    clics = 0
+    
+    class Contador
+        fn incrementar()
+            clics.value += 1
+</script>
+
+<main>
+    <h1>Mi App en Nini</h1>
+    <span>Contador: {clics}</span>
+    <button on_click="Contador.incrementar">
+        Aumentar
+    </button>
+</main>
+
+<style>
+    main:
+        padding: 2rem
+        background: #222
+        border-radius: 10px
+    h1:
+        color: gold
+    button:
+        background: gold
+        color: black
+        padding: 0.5rem 1rem
+        border: none
+        border-radius: 5px
+        cursor: pointer
+    button:hover:
+        background: orange
+</style>

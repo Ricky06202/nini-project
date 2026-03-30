@@ -1,0 +1,6 @@
+[workspace]
+resolver = "3"
+members = [
+    "packages/nini-compiler",
+    "packages/nini-cli",
+]
