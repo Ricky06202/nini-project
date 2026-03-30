@@ -1,0 +1,27 @@
+<script>
+    import "./Card.nini" as Card
+    
+    mensaje = "Hola desde Nini!"
+    subtitulo = "Sistema de componentes funcionando"
+</script>
+
+<main>
+    <h1>{mensaje}</h1>
+    <p>{subtitulo}</p>
+    
+    <Card titulo="Mi Card personalizado!" />
+    <Card />
+</main>
+
+<style>
+    main:
+        padding: 2rem
+        background: #222
+        border-radius: 10px
+    h1:
+        color: gold
+        margin-bottom: 0.5rem
+    p:
+        color: #888
+        margin-bottom: 2rem
+</style>

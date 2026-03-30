@@ -1,4 +1,5 @@
-use nini_compiler::{generate_component_js, parse_component};
+use nini_compiler::{generate_component_js, parse_component_with_path, ComponentResolver};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::thread;
@@ -27,41 +28,67 @@ const HTML_TEMPLATE: &str = r#"
 "#;
 
 fn main() {
-    let ruta_entrada = "samples/Contador.nini";
+    let args: Vec<String> = std::env::args().collect();
+    let ruta_entrada = args
+        .get(1)
+        .map(|s| s.as_str())
+        .unwrap_or("samples/Contador.nini");
+
     let ruta_salida_js = "dist/bundle.js";
     let ruta_salida_html = "dist/index.html";
 
+    println!("📦 Compilando: {}", ruta_entrada);
+
     let contenido = fs::read_to_string(ruta_entrada).expect("Error al leer");
 
-    // 1. Parsear (Fase 1)
-    if let Ok((_, component)) = parse_component(&contenido) {
-        // Generar un ID de scope único (por ahora simple)
-        let scope_class = "nini-1";
-        // 2. Generar JS y CSS (Fase 2 y 2.5)
-        let (js_final, css_final) = generate_component_js(&component, scope_class);
+    let base_dir = Path::new(ruta_entrada)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "samples".to_string());
 
-        // 3. Crear directorio dist y subdirectorio para runtime
+    // 1. Parsear el componente principal
+    if let Ok((_, mut component)) = parse_component_with_path(&contenido, ruta_entrada.to_string())
+    {
+        // 2. Resolver imports
+        let mut resolver = ComponentResolver::new();
+        if let Err(e) = resolver.resolve_imports(&mut component, &base_dir) {
+            println!("⚠️  Error de dependencias: {}", e);
+        }
+
+        let resolved_components = resolver.components;
+
+        println!("   📎 Componentes resueltos: {}", resolved_components.len());
+
+        // Generar un ID de scope único
+        let scope_class = "nini-1";
+
+        // 3. Generar JS y CSS
+        let (js_final, css_final) =
+            generate_component_js(&component, scope_class, &resolved_components);
+
+        // 4. Crear directorio dist y subdirectorio para runtime
         fs::create_dir_all("dist/nini-runtime-web").ok();
 
-        // 4. Copiar el runtime de Nini
+        // 5. Copiar el runtime de Nini
         let runtime_src = "packages/nini-runtime-web/core.js";
         let runtime_dst = "dist/nini-runtime-web/core.js";
         fs::copy(runtime_src, runtime_dst).expect("Error al copiar runtime");
 
-        // 5. Escribir archivo JS
+        // 6. Escribir archivo JS
         fs::write(ruta_salida_js, &js_final).expect("Error al escribir JS");
-        // 6. Escribir archivo CSS
+
+        // 7. Escribir archivo CSS
         let ruta_salida_css = "dist/styles.css";
         fs::write(ruta_salida_css, &css_final).expect("Error al escribir CSS");
 
-        // 7. Escribir el HTML (El Shell de Nini)
+        // 8. Escribir el HTML (El Shell de Nini)
         fs::write(ruta_salida_html, HTML_TEMPLATE).expect("Error al escribir HTML");
 
         println!("🚀 Nini Build Exitosa:");
         println!("   - JS: dist/bundle.js");
         println!("   - HTML: dist/index.html");
 
-        // 6. Iniciar servidor local
+        // 9. Iniciar servidor local
         let server = Server::http("0.0.0.0:8080").unwrap();
         println!("\n🌐 Servidor local en http://localhost:8080");
         println!("   Presiona Ctrl+C para detener.");

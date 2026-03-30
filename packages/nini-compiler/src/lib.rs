@@ -1,6 +1,6 @@
 // packages/nini-compiler/src/lib.rs
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NiniNode {
     Variable {
         name: String,
@@ -20,6 +20,10 @@ pub enum NiniNode {
         content: String,
     },
     Expression(String),
+    Import {
+        path: String,
+        alias: String,
+    },
 }
 
 #[derive(Debug)]
@@ -188,10 +192,35 @@ pub fn parse_class(input: &str) -> IResult<&str, NiniNode> {
     ))
 }
 
-// Parser para un constructo (variable o clase)
+// Parser para imports: import "./Component.nini" as ComponentName
+fn parse_import(input: &str) -> IResult<&str, NiniNode> {
+    let (input, _) = tag("import ")(input)?;
+    let (input, _) = multispace0(input)?;
+
+    // Parsear la ruta entre comillas
+    let (input, _) = tag("\"")(input)?;
+    let (input, path) = take_while(|c: char| c != '"')(input)?;
+    let (input, _) = tag("\"")(input)?;
+
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("as ")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, alias) = alpha1(input)?;
+    let (input, _) = line_ending(input)?;
+
+    Ok((
+        input,
+        NiniNode::Import {
+            path: path.to_string(),
+            alias: alias.to_string(),
+        },
+    ))
+}
+
+// Parser para un constructo (variable, clase o import)
 fn parse_construct(input: &str) -> IResult<&str, NiniNode> {
     let (input, _) = multispace0(input)?;
-    alt((parse_variable, parse_class))(input)
+    alt((parse_import, parse_variable, parse_class))(input)
 }
 
 // Parser para un archivo completo (formato antiguo)
@@ -219,39 +248,96 @@ use nom::{
 };
 
 // Estructura que representa un componente Nini
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Component {
-    pub script: Vec<NiniNode>, // AST del bloque <script>
-    pub template: String,      // Contenido HTML del template (crudo)
-    pub style: String,         // Contenido CSS del bloque <style> (ignorado por ahora)
+    pub script: Vec<NiniNode>,
+    pub template: String,
+    pub style: String,
+    pub file_path: String,
 }
 
-#[derive(Debug)]
-struct StyleRule {
-    selector: String,
-    properties: Vec<(String, String)>,
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
+pub struct ComponentResolver {
+    pub components: HashMap<String, Component>,
+    visited: Vec<String>,
 }
 
-// Parser que separa el archivo en script, template y style
-pub fn parse_component(input: &str) -> IResult<&str, Component> {
+impl ComponentResolver {
+    pub fn new() -> Self {
+        ComponentResolver {
+            components: HashMap::new(),
+            visited: Vec::new(),
+        }
+    }
+
+    pub fn resolve_imports(
+        &mut self,
+        component: &mut Component,
+        base_dir: &str,
+    ) -> Result<(), String> {
+        for node in &component.script {
+            if let NiniNode::Import { path, alias } = node {
+                let full_path = resolve_path(base_dir, path);
+
+                if self.visited.contains(&full_path) {
+                    return Err(format!("Dependencia cíclica detectada: {}", path));
+                }
+
+                self.visited.push(full_path.clone());
+
+                match std::fs::read_to_string(&full_path) {
+                    Ok(content) => {
+                        let imported_path = Path::new(&full_path)
+                            .parent()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_else(|| base_dir.to_string());
+
+                        match parse_component_with_path(&content, full_path.clone()) {
+                            Ok((_, mut imported_comp)) => {
+                                self.resolve_imports(&mut imported_comp, &imported_path)?;
+                                self.components.insert(alias.clone(), imported_comp);
+                            }
+                            Err(e) => {
+                                return Err(format!("Error parseando {}: {:?}", path, e));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        return Err(format!("No se pudo leer {}: {}", path, e));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn resolve_path(base_dir: &str, relative_path: &str) -> String {
+    if relative_path.starts_with('/') || relative_path.contains(':') {
+        return relative_path.to_string();
+    }
+    let clean_base = base_dir.trim_end_matches('/');
+    format!("{}/{}", clean_base, relative_path)
+}
+
+pub fn parse_component_with_path(input: &str, file_path: String) -> IResult<&str, Component> {
     // Buscar el bloque <script>...</script>
     let (input, _) = multispace0(input)?;
     let (input, _) = tag("<script>")(input)?;
-    let (input, script_content) = take_while(|c| c != '<')(input)?; // Tomar hasta que encuentre otro '<'
+    let (input, script_content) = take_while(|c| c != '<')(input)?;
     let (input, _) = tag("</script>")(input)?;
 
-    // Parsear el script content
     let (_, script_ast) = parse_file(script_content)
         .map_err(|_| nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))?;
 
-    // El resto es template (y posiblemente <style>)
-    let (input, template) = take_while(|_| true)(input)?; // Por ahora, todo el resto
+    let (input, template) = take_while(|_| true)(input)?;
 
-    // Separar template y style (simple: buscar <style>)
     let (template, style) = if let Some(style_start) = template.find("<style>") {
         let (before, after) = template.split_at(style_start);
         let (style_content, _) = after.split_at(after.find("</style>").unwrap_or(after.len()));
-        let style_content = &style_content[7..]; // remover "<style>"
+        let style_content = &style_content[7..];
         (before.trim(), style_content.trim())
     } else {
         (template.trim(), "")
@@ -263,8 +349,20 @@ pub fn parse_component(input: &str) -> IResult<&str, Component> {
             script: script_ast.nodes,
             template: template.to_string(),
             style: style.to_string(),
+            file_path,
         },
     ))
+}
+
+#[derive(Debug)]
+struct StyleRule {
+    selector: String,
+    properties: Vec<(String, String)>,
+}
+
+// Parser que separa el archivo en script, template y style
+pub fn parse_component(input: &str) -> IResult<&str, Component> {
+    parse_component_with_path(input, "".to_string())
 }
 
 // Parser de estilo Nini (sintaxis con indentación y dos puntos)
@@ -356,11 +454,30 @@ fn generate_scoped_css(rules: &[StyleRule], scope_class: &str) -> String {
 }
 
 // Generador de código JavaScript para componentes
-pub fn generate_component_js(component: &Component, scope_class: &str) -> (String, String) {
+pub fn generate_component_js(
+    component: &Component,
+    scope_class: &str,
+    resolved_components: &HashMap<String, Component>,
+) -> (String, String) {
     let mut js_code = String::new();
+
+    // Extraer imports del script
+    let imports: Vec<(String, String)> = component
+        .script
+        .iter()
+        .filter_map(|node| {
+            if let NiniNode::Import { path, alias } = node {
+                Some((path.clone(), alias.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
 
     // Importar el runtime de Nini
     js_code.push_str("import { nini } from './nini-runtime-web/core.js';\n\n");
+
+    // NO generar vars de componentes aquí - se generan después del innerHTML
 
     // Generar código para el script (variables, clases, etc.)
     for node in &component.script {
@@ -376,56 +493,77 @@ pub fn generate_component_js(component: &Component, scope_class: &str) -> (Strin
             NiniNode::Class { name, members } => {
                 js_code.push_str(&format!("class {} {{\n", name));
                 for member in members {
-                    match member {
-                        NiniNode::Function { name, body } => {
-                            js_code.push_str(&format!("  {}() {{\n", name));
-                            if body.is_empty() {
-                                js_code.push_str(&format!(
-                                    "    console.log('Ejecutando {}');\n",
-                                    name
-                                ));
-                            } else {
-                                for expr_node in body {
-                                    if let NiniNode::Expression(expr) = expr_node {
-                                        js_code.push_str(&format!("    {};\n", expr));
-                                    }
+                    if let NiniNode::Function { name, body } = member {
+                        js_code.push_str(&format!("  {}() {{\n", name));
+                        if body.is_empty() {
+                            js_code.push_str("    console.log(' ejecutar ');\n");
+                        } else {
+                            for expr_node in body {
+                                if let NiniNode::Expression(expr) = expr_node {
+                                    js_code.push_str(&format!("    {};\n", expr));
                                 }
                             }
-                            js_code.push_str("  }\n");
                         }
-                        _ => {}
+                        js_code.push_str("  }\n");
                     }
                 }
                 js_code.push_str("}\n");
             }
+            NiniNode::Import { .. } => {}
             _ => {}
         }
     }
 
+    // Resolver componentes en template
+    let resolved_template =
+        resolve_components_in_template(&component.template, &imports, resolved_components);
+
     // Generar el template HTML
-    // Por ahora, simplemente insertar el template crudo en #nini-app
-    // y luego crear efectos para las expresiones.
-    // Para simplificar, transformaremos el template reemplazando {expr} con spans con IDs.
-    let template_html = transform_template(&component.template, scope_class);
+    let template_html = transform_template(&resolved_template, scope_class);
     js_code.push_str(&format!(
         "document.getElementById('nini-app').innerHTML = `{}`;\n\n",
         template_html
     ));
 
+    // NO pre-generar vars de componentes - se leen directamente en los efectos
+
+    // Obtener los nombres de variables del app
+    let app_var_names: Vec<String> = component
+        .script
+        .iter()
+        .filter_map(|node| {
+            if let NiniNode::Variable { name, .. } = node {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
     // Crear efectos para las expresiones
-    // Necesitamos extraer las expresiones del template original.
-    let parts = parse_template(&component.template);
+    let parts = parse_template(&resolved_template);
     let mut effect_counter = 0;
+
     for part in parts {
         if let TemplatePart::Expression(expr) = part {
             effect_counter += 1;
             let span_id = format!("nini-expr-{}", effect_counter);
-            // Reemplazar el span con ID correspondiente
-            // (esto se hizo en transform_template, pero necesitamos suscribirnos)
-            js_code.push_str(&format!(
-                "nini.effect(() => {{\n    const el = document.getElementById('{}');\n    if (el) el.textContent = {}.value;\n}});\n",
-                span_id, expr
-            ));
+
+            // Si es variable del app, usar signal. Si no, leer del DOM
+            if app_var_names.contains(&expr.to_string()) {
+                js_code.push_str(&format!(
+                    "nini.effect(() => {{\n    const el = document.getElementById('{}');\n    if (el) el.textContent = {}.value;\n}});\n",
+                    span_id, expr
+                ));
+            } else {
+                // Es variable de componente - buscar default en los componentes importados
+                let default_val =
+                    get_default_value_from_component(&expr, &imports, resolved_components);
+                js_code.push_str(&format!(
+                    "nini.effect(() => {{\n    const el = document.getElementById('{}');\n    if (el) {{\n        const comp = el.closest('.comp[data-instance]');\n        const instance = comp ? comp.getAttribute('data-instance') : null;\n        const propName = '{}';\n        const attr = instance ? `data-${{propName}}-${{instance}}` : null;\n        el.textContent = (attr && comp && comp.hasAttribute(attr)) ? comp.getAttribute(attr) : {};\n    }}\n}});\n",
+                    span_id, expr, default_val
+                ));
+            }
         }
     }
 
@@ -445,11 +583,385 @@ pub fn generate_component_js(component: &Component, scope_class: &str) -> (Strin
         }
     }
 
-    // Generar CSS scoped
-    let rules = parse_style(&component.style);
-    let css = generate_scoped_css(&rules, scope_class);
+    // Generar CSS scoped (incluir CSS de componentes hijos)
+    let mut all_css = generate_scoped_css(&parse_style(&component.style), scope_class);
 
-    (js_code, css)
+    let mut scope_counter = 2;
+    for (_path, alias) in &imports {
+        if let Some(comp) = resolved_components.get(alias) {
+            let child_scope = format!("{}-{}", scope_class, scope_counter);
+            all_css.push_str(&generate_scoped_css(
+                &parse_style(&comp.style),
+                &child_scope,
+            ));
+            scope_counter += 1;
+        }
+    }
+
+    (js_code, all_css)
+}
+
+// Genera variables para un componente importado
+// Genera vars simples para componentes (sin sufijos)
+fn get_default_value(expr: &str) -> String {
+    if expr.parse::<f64>().is_ok() {
+        expr.to_string()
+    } else {
+        format!("\"{}\"", expr)
+    }
+}
+
+fn get_default_value_from_component(
+    expr: &str,
+    imports: &[(String, String)],
+    components: &HashMap<String, Component>,
+) -> String {
+    // Buscar el default en los componentes importados
+    for (_path, alias) in imports {
+        if let Some(comp) = components.get(alias) {
+            for node in &comp.script {
+                if let NiniNode::Variable { name, value } = node {
+                    if name == expr {
+                        return format!("\"{}\"", value);
+                    }
+                }
+            }
+        }
+    }
+    // Default si no se encuentra
+    format!("\"{}\"", expr)
+}
+
+fn generate_component_vars_simple(component: &Component) -> String {
+    let mut js_code = String::new();
+
+    for node in &component.script {
+        match node {
+            NiniNode::Variable { name, value } => {
+                let default_value = if value.parse::<f64>().is_ok() {
+                    value.to_string()
+                } else {
+                    format!("\"{}\"", value)
+                };
+                js_code.push_str(&format!(
+                    "const {} = nini.signal(nini.prop('{}', {}));\n",
+                    name, name, default_value
+                ));
+            }
+            NiniNode::Class { name, members } => {
+                js_code.push_str(&format!("class {} {{\n", name));
+                for member in members {
+                    if let NiniNode::Function {
+                        name: fn_name,
+                        body,
+                    } = member
+                    {
+                        js_code.push_str(&format!("  {}() {{\n", fn_name));
+                        if body.is_empty() {
+                            js_code.push_str("    console.log(' ejecutar ');\n");
+                        } else {
+                            for expr_node in body {
+                                if let NiniNode::Expression(expr) = expr_node {
+                                    js_code.push_str(&format!("    {};\n", expr));
+                                }
+                            }
+                        }
+                        js_code.push_str("  }\n");
+                    }
+                }
+                js_code.push_str("}\n");
+            }
+            _ => {}
+        }
+    }
+
+    js_code
+}
+
+fn generate_component_vars(
+    component: &Component,
+    scope_class: &str,
+    resolved_components: &HashMap<String, Component>,
+    processed: &mut HashSet<String>,
+) -> String {
+    let mut js_code = String::new();
+
+    // Procesar imports anidados
+    let nested_imports: Vec<(String, String)> = component
+        .script
+        .iter()
+        .filter_map(|node| {
+            if let NiniNode::Import { path, alias } = node {
+                Some((path.clone(), alias.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (_path, alias) in nested_imports {
+        if !processed.contains(&alias) {
+            processed.insert(alias.clone());
+            if let Some(comp) = resolved_components.get(&alias) {
+                let child_scope = format!("{}-{}", scope_class, 2);
+                js_code.push_str(&generate_component_vars(
+                    comp,
+                    &child_scope,
+                    resolved_components,
+                    processed,
+                ));
+            }
+        }
+    }
+
+    // Generar variables - usar nini.prop() para leer del DOM
+    for node in &component.script {
+        match node {
+            NiniNode::Variable { name, value } => {
+                let default_value = if value.parse::<f64>().is_ok() {
+                    value.to_string()
+                } else {
+                    format!("\"{}\"", value)
+                };
+                js_code.push_str(&format!(
+                    "const {} = nini.signal(nini.prop('{}', {}));\n",
+                    name, name, default_value
+                ));
+            }
+            NiniNode::Class { name, members } => {
+                js_code.push_str(&format!("class {} {{\n", name));
+                for member in members {
+                    if let NiniNode::Function { name, body } = member {
+                        js_code.push_str(&format!("  {}() {{\n", name));
+                        if body.is_empty() {
+                            js_code.push_str("    console.log(' ejecutar ');\n");
+                        } else {
+                            for expr_node in body {
+                                if let NiniNode::Expression(expr) = expr_node {
+                                    js_code.push_str(&format!("    {};\n", expr));
+                                }
+                            }
+                        }
+                        js_code.push_str("  }\n");
+                    }
+                }
+                js_code.push_str("}\n");
+            }
+            _ => {}
+        }
+    }
+
+    js_code
+}
+
+// Extrae props de un tag como <Card titulo="valor" />
+fn extract_props(tag_content: &str) -> Vec<(String, String)> {
+    let mut props = Vec::new();
+    let mut current = tag_content.trim();
+
+    while !current.is_empty() {
+        current = current.trim();
+        if current.is_empty() || current.starts_with('/') || current.starts_with('>') {
+            break;
+        }
+
+        // Buscar nombre de prop
+        let mut name_end = 0;
+        for (i, c) in current.char_indices() {
+            if c == '=' || c.is_whitespace() || c == '>' || c == '/' {
+                break;
+            }
+            name_end = i + 1;
+        }
+
+        if name_end == 0 {
+            break;
+        }
+
+        let prop_name = &current[..name_end];
+        current = &current[name_end..].trim();
+
+        if current.starts_with('=') {
+            current = &current[1..].trim();
+            let (value, rest) = if current.starts_with('"') {
+                let quote = current[1..]
+                    .find('"')
+                    .map(|p| p + 1)
+                    .unwrap_or(current.len());
+                (&current[1..quote], &current[quote + 1..])
+            } else if current.starts_with('\'') {
+                let quote = current[1..]
+                    .find('\'')
+                    .map(|p| p + 1)
+                    .unwrap_or(current.len());
+                (&current[1..quote], &current[quote + 1..])
+            } else {
+                let end = current
+                    .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                    .unwrap_or(current.len());
+                (&current[..end], &current[end..])
+            };
+            props.push((prop_name.to_string(), value.to_string()));
+            current = rest;
+        }
+    }
+
+    props
+}
+
+// Cuenta las instancias de cada componente
+fn count_component_instances(template: &str, alias: &str) -> usize {
+    let with_attrs = format!("<{} ", alias);
+    let self_closing = format!("<{}/>", alias);
+    let self_closing_space = format!("<{} />", alias);
+
+    let mut count = 0;
+    let mut search = template;
+
+    while search.contains(&with_attrs)
+        || search.contains(&self_closing)
+        || search.contains(&self_closing_space)
+    {
+        if let Some(pos) = search.find(&with_attrs) {
+            search = &search[pos + with_attrs.len()..];
+            count += 1;
+        } else if let Some(pos) = search.find(&self_closing) {
+            search = &search[pos + self_closing.len()..];
+            count += 1;
+        } else if let Some(pos) = search.find(&self_closing_space) {
+            search = &search[pos + self_closing_space.len()..];
+            count += 1;
+        } else {
+            break;
+        }
+    }
+
+    count
+}
+
+// Genera variables únicas para N instancias de un componente
+fn generate_component_instance_vars(
+    component: &Component,
+    base_scope: &str,
+    instance_index: usize,
+) -> String {
+    let mut js_code = String::new();
+    let instance_suffix = format!("_{}", instance_index);
+
+    for node in &component.script {
+        match node {
+            NiniNode::Variable { name, value } => {
+                let default_value = if value.parse::<f64>().is_ok() {
+                    value.to_string()
+                } else {
+                    format!("\"{}\"", value)
+                };
+                let var_name = format!("{}{}", name, instance_suffix);
+                js_code.push_str(&format!(
+                    "const {} = nini.signal(nini.prop('{}{}', {}));\n",
+                    var_name, name, instance_suffix, default_value
+                ));
+            }
+            NiniNode::Class { name, members } => {
+                js_code.push_str(&format!("class {} {{\n", name));
+                for member in members {
+                    if let NiniNode::Function {
+                        name: fn_name,
+                        body,
+                    } = member
+                    {
+                        js_code.push_str(&format!("  {}() {{\n", fn_name));
+                        if body.is_empty() {
+                            js_code.push_str("    console.log(' ejecutar ');\n");
+                        } else {
+                            for expr_node in body {
+                                if let NiniNode::Expression(expr) = expr_node {
+                                    js_code.push_str(&format!("    {};\n", expr));
+                                }
+                            }
+                        }
+                        js_code.push_str("  }\n");
+                    }
+                }
+                js_code.push_str("}\n");
+            }
+            _ => {}
+        }
+    }
+
+    js_code
+}
+
+// Reemplaza <Componente /> con el template del componente
+fn resolve_components_in_template(
+    template: &str,
+    imports: &[(String, String)],
+    components: &HashMap<String, Component>,
+) -> String {
+    let mut result = template.to_string();
+
+    for (_path, alias) in imports {
+        if let Some(comp) = components.get(alias) {
+            // Replace with attributes: <Card titulo="..." />
+            let with_attrs = format!("<{} ", alias);
+            while result.contains(&with_attrs) {
+                if let Some(pos) = result.find(&with_attrs) {
+                    let rest = &result[pos + with_attrs.len()..];
+                    if let Some(close_pos) = rest.find('>') {
+                        let tag_content = &rest[..close_pos];
+                        let props = extract_props(tag_content);
+
+                        // Generate unique ID for this instance
+                        let instance_id = format!(
+                            "{}_{}",
+                            alias,
+                            result.matches(&with_attrs).count()
+                                + result.matches(&format!("<{}/>", alias)).count()
+                        );
+
+                        // Convert props to data attributes with instance suffix
+                        let props_attrs: String = props
+                            .iter()
+                            .map(|(k, v)| {
+                                format!("data-{}-{}=\"{}\"", k.to_lowercase(), instance_id, v)
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
+
+                        let replacement = format!(
+                            "<div class=\"comp\" data-instance=\"{}\" {}>{}</div>",
+                            instance_id, props_attrs, comp.template
+                        );
+
+                        let end = pos + with_attrs.len() + close_pos + 1;
+                        result = format!("{}{}{}", &result[..pos], replacement, &result[end..]);
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            // Replace self-closing: <Card />
+            let self_closing = format!("<{}/>", alias);
+            let mut instance_counter = 0;
+            while result.contains(&self_closing) {
+                if let Some(pos) = result.find(&self_closing) {
+                    instance_counter += 1;
+                    let instance_id = format!("{}_{}", alias, instance_counter);
+                    let replacement = format!(
+                        "<div class=\"comp\" data-instance=\"{}\">{}</div>",
+                        instance_id, comp.template
+                    );
+                    let end = pos + self_closing.len();
+                    result = format!("{}{}{}", &result[..pos], replacement, &result[end..]);
+                }
+            }
+        }
+    }
+
+    result
 }
 
 // Transforma el template HTML reemplazando {expr} con spans con IDs únicas.

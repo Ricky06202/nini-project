@@ -26,6 +26,23 @@ export const nini = {
             }
         };
     },
+    _currentInstance: null,
+    setCurrentInstance(instance) {
+        nini._currentInstance = instance;
+    },
+    prop(name, defaultValue) {
+        // Si hay una instancia activa, buscar solo en esa
+        if (nini._currentInstance) {
+            const comp = document.querySelector(`.comp[data-instance="${nini._currentInstance}"]`);
+            if (comp) {
+                const attr = `data-${name}-${nini._currentInstance}`;
+                if (comp.hasAttribute(attr)) {
+                    return comp.getAttribute(attr);
+                }
+            }
+        }
+        return defaultValue;
+    },
     // Crea un effect que se re-ejecuta cuando cambian las signals a las que accede
     effect(fn) {
         const effectFn = () => {
@@ -38,7 +55,5 @@ export const nini = {
     },
     updateDOM() {
         console.log("Nini detectó un cambio y está actualizando la UI...");
-        // Aquí podríamos actualizar elementos del DOM que tengan atributos especiales
-        // Por ahora solo un log
     }
 };
