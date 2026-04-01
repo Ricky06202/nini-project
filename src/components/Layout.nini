@@ -1,0 +1,46 @@
+<script>
+    prop titulo = "Nini App"
+</script>
+
+<div class="layout">
+    <nav>
+        <Link to="/">Inicio</Link>
+        <Link to="/perfil">Perfil</Link>
+        <Link to="/acerca">Acerca</Link>
+    </nav>
+    <main>
+        <slot />
+    </main>
+    <footer>
+        <p>© 2024 Nini Framework</p>
+    </footer>
+</div>
+
+<style>
+    layout:
+        min-height: 100vh
+        display: flex
+        flex-direction: column
+    nav:
+        background: #252525
+        padding: 1rem 2rem
+        display: flex
+        gap: 1.5rem
+        border-bottom: 1px solid #333
+    nav a:
+        color: gold
+        text-decoration: none
+        padding: 0.5rem 1rem
+        border-radius: 4px
+    main:
+        flex: 1
+        padding: 2rem
+    footer:
+        background: #1a1a1a
+        padding: 1rem
+        text-align: center
+        border-top: 1px solid #333
+    footer p:
+        color: #666
+        font-size: 0.9rem
+</style>

@@ -1,0 +1,24 @@
+<script>
+    import "../components/Layout.nini" as Layout
+    import "../components/Card.nini" as Card
+    mensaje = "Bienvenido a Nini SPA"
+</script>
+
+<Layout>
+    <div class="home">
+        <h1>{mensaje}</h1>
+        <p>Esta es una Single Page Application con Router</p>
+        
+        <Card titulo="Card en Home" descripcion="Desde la página principal" />
+    </div>
+</Layout>
+
+<style>
+    home:
+        text-align: center
+        padding: 2rem
+    h1:
+        color: gold
+    p:
+        color: #888
+</style>

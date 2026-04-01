@@ -440,10 +440,141 @@ fn parse_style(input: &str) -> Vec<StyleRule> {
 
 // Generar CSS scoped a partir de reglas y un ID de componente
 fn generate_scoped_css(rules: &[StyleRule], scope_class: &str) -> String {
+    // HTML tags that should not be prefixed with a dot
+    let html_tags = [
+        "a",
+        "abbr",
+        "address",
+        "area",
+        "article",
+        "aside",
+        "audio",
+        "b",
+        "base",
+        "bdi",
+        "bdo",
+        "blockquote",
+        "body",
+        "br",
+        "button",
+        "canvas",
+        "caption",
+        "cite",
+        "code",
+        "col",
+        "colgroup",
+        "data",
+        "datalist",
+        "dd",
+        "del",
+        "details",
+        "dfn",
+        "dialog",
+        "div",
+        "dl",
+        "dt",
+        "em",
+        "embed",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "head",
+        "header",
+        "hgroup",
+        "hr",
+        "html",
+        "i",
+        "iframe",
+        "img",
+        "input",
+        "ins",
+        "kbd",
+        "label",
+        "legend",
+        "li",
+        "link",
+        "main",
+        "map",
+        "mark",
+        "menu",
+        "meta",
+        "meter",
+        "nav",
+        "noscript",
+        "object",
+        "ol",
+        "optgroup",
+        "option",
+        "output",
+        "p",
+        "param",
+        "picture",
+        "pre",
+        "progress",
+        "q",
+        "rp",
+        "rt",
+        "ruby",
+        "s",
+        "samp",
+        "script",
+        "section",
+        "select",
+        "small",
+        "source",
+        "span",
+        "strong",
+        "style",
+        "sub",
+        "summary",
+        "sup",
+        "table",
+        "tbody",
+        "td",
+        "template",
+        "textarea",
+        "tfoot",
+        "th",
+        "thead",
+        "time",
+        "title",
+        "tr",
+        "track",
+        "u",
+        "ul",
+        "var",
+        "video",
+        "wbr",
+    ];
+
     let mut css = String::new();
     for rule in rules {
+        // Check if selector is an HTML tag
+        let base_selector = rule.selector.split_whitespace().next().unwrap_or("");
+        let is_html_tag = html_tags.contains(&base_selector.to_lowercase().as_str());
+
+        // Si el selector no empieza con . o # y no es un tag HTML, tratarlo como clase
+        let processed_selector = if rule.selector.starts_with('.') || rule.selector.starts_with('#')
+        {
+            rule.selector.clone()
+        } else if is_html_tag {
+            // Keep HTML tags as-is
+            rule.selector.clone()
+        } else {
+            // Treat as class selector
+            format!(".{}", rule.selector)
+        };
+
         // Prefijar el selector con la clase de scope
-        let scoped_selector = format!(".{} {}", scope_class, rule.selector);
+        let scoped_selector = format!(".{} {}", scope_class, processed_selector);
         css.push_str(&format!("{} {{\n", scoped_selector));
         for (prop, value) in &rule.properties {
             css.push_str(&format!("  {}: {};\n", prop, value));
@@ -586,15 +717,13 @@ pub fn generate_component_js(
     // Generar CSS scoped (incluir CSS de componentes hijos)
     let mut all_css = generate_scoped_css(&parse_style(&component.style), scope_class);
 
-    let mut scope_counter = 2;
+    // Generate CSS for each imported component using alias only (no counter)
     for (_path, alias) in &imports {
         if let Some(comp) = resolved_components.get(alias) {
-            let child_scope = format!("{}-{}", scope_class, scope_counter);
             all_css.push_str(&generate_scoped_css(
                 &parse_style(&comp.style),
-                &child_scope,
+                alias, // Use just the alias (e.g., "Layout", "Card")
             ));
-            scope_counter += 1;
         }
     }
 
@@ -703,10 +832,10 @@ fn generate_component_vars(
         if !processed.contains(&alias) {
             processed.insert(alias.clone());
             if let Some(comp) = resolved_components.get(&alias) {
-                let child_scope = format!("{}-{}", scope_class, 2);
+                // Use alias as scope (matches CSS)
                 js_code.push_str(&generate_component_vars(
                     comp,
-                    &child_scope,
+                    &alias, // Just the alias, no counter
                     resolved_components,
                     processed,
                 ));
@@ -929,7 +1058,7 @@ fn resolve_components_in_template(
                             .join(" ");
 
                         let replacement = format!(
-                            "<div class=\"comp\" data-instance=\"{}\" {}>{}</div>",
+                            "<div class=\"comp {alias}\" data-instance=\"{}\" {}>{}</div>",
                             instance_id, props_attrs, comp.template
                         );
 
@@ -950,12 +1079,55 @@ fn resolve_components_in_template(
                 if let Some(pos) = result.find(&self_closing) {
                     instance_counter += 1;
                     let instance_id = format!("{}_{}", alias, instance_counter);
+
+                    // Add alias class to the comp wrapper for CSS scoping
                     let replacement = format!(
-                        "<div class=\"comp\" data-instance=\"{}\">{}</div>",
+                        "<div class=\"comp {alias}\" data-instance=\"{}\">{}</div>",
                         instance_id, comp.template
                     );
                     let end = pos + self_closing.len();
                     result = format!("{}{}{}", &result[..pos], replacement, &result[end..]);
+                }
+            }
+
+            // Replace with children: <Layout>...content...</Layout>
+            let with_children_start = format!("<{}>", alias);
+            let with_children_end = format!("</{}>", alias);
+            let mut children_counter: usize = 0;
+
+            while let Some(start_pos) = result.find(&with_children_start) {
+                if let Some(end_pos) = result[start_pos..].find(&with_children_end) {
+                    children_counter += 1;
+                    let content_start = start_pos + with_children_start.len();
+                    let content_end = start_pos + end_pos;
+                    let children = &result[content_start..content_end];
+                    let instance_id = format!("{}_{}", alias, children_counter);
+
+                    // First resolve any components in the children
+                    let children_resolved =
+                        resolve_components_in_template(children, imports, components);
+
+                    // Replace slot directly with children content
+                    let template_with_children = comp
+                        .template
+                        .replace("<slot />", &children_resolved)
+                        .replace("<slot></slot>", &children_resolved);
+
+                    // Add alias class to the comp wrapper for CSS scoping
+                    let replacement = format!(
+                        "<div class=\"comp {alias}\" data-instance=\"{}\">{}</div>",
+                        instance_id, template_with_children
+                    );
+
+                    let full_end = content_end + with_children_end.len();
+                    result = format!(
+                        "{}{}{}",
+                        &result[..start_pos],
+                        replacement,
+                        &result[full_end..]
+                    );
+                } else {
+                    break;
                 }
             }
         }
@@ -966,17 +1138,43 @@ fn resolve_components_in_template(
 
 // Transforma el template HTML reemplazando {expr} con spans con IDs únicas.
 fn transform_template(template: &str, scope_class: &str) -> String {
-    let mut result = String::new();
-    let mut current = template;
+    // First transform Link components
+    let mut result = template.to_string();
+
+    // Transform <Link to="...">text</Link> to <a href="..." data-nini-link>text</a>
+    while let Some(start) = result.find("<Link ") {
+        if let Some(to_pos) = result[start..].find("to=\"") {
+            let path_start = start + to_pos + 4;
+            if let Some(path_end) = result[path_start..].find('"') {
+                let path = &result[path_start..path_start + path_end];
+                let after_path = path_start + path_end;
+                if let Some(tag_end) = result[after_path..].find('>') {
+                    let content_start = after_path + tag_end + 1;
+                    if let Some(close_pos) = result[content_start..].find("</Link>") {
+                        let content = &result[content_start..content_start + close_pos];
+                        let replacement =
+                            format!(r#"<a href="{}" data-nini-link>{}</a>"#, path, content);
+                        let full_end = content_start + close_pos + 7;
+                        result =
+                            format!("{}{}{}", &result[..start], replacement, &result[full_end..]);
+                        continue;
+                    }
+                }
+            }
+        }
+        break;
+    }
+
+    // Now transform expressions {expr} -> <span>
+    let mut result_final = String::new();
+    let mut current = result.as_str();
     let mut expr_counter = 0;
 
     while !current.is_empty() {
         if let Some(start) = current.find('{') {
-            // Texto antes de la llave
             if start > 0 {
-                result.push_str(&current[..start]);
+                result_final.push_str(&current[..start]);
             }
-            // Encontrar la llave de cierre
             if let Some(end) = current[start..].find('}') {
                 expr_counter += 1;
                 let expr = &current[start + 1..start + end];
@@ -985,21 +1183,18 @@ fn transform_template(template: &str, scope_class: &str) -> String {
                     expr_counter,
                     expr.trim()
                 );
-                result.push_str(&span);
+                result_final.push_str(&span);
                 current = &current[start + end + 1..];
             } else {
-                // No hay cierre, tratar el resto como texto
-                result.push_str(&current[start..]);
+                result_final.push_str(&current[start..]);
                 break;
             }
         } else {
-            // No más llaves
-            result.push_str(current);
+            result_final.push_str(current);
             break;
         }
     }
-    // Envolver el resultado en un div con la clase de scope
-    format!(r#"<div class="{}">{}</div>"#, scope_class, result)
+    format!(r#"<div class="{}">{}</div>"#, scope_class, result_final)
 }
 
 // Generador de código JavaScript (legacy, para compatibilidad)
@@ -1088,5 +1283,148 @@ mod tests {
         assert_eq!(ast.nodes.len(), 2);
         assert!(matches!(&ast.nodes[0], NiniNode::Variable { name, .. } if name == "nombre"));
         assert!(matches!(&ast.nodes[1], NiniNode::Class { .. }));
+    }
+
+    #[test]
+    fn test_slot_replaced_with_children() {
+        // Test that <slot /> is replaced with children content
+        let component_template = "<div class=\"layout\"><slot /></div>";
+        let children = "<p>Hello World</p>";
+
+        let result = component_template
+            .replace("<slot />", children)
+            .replace("<slot></slot>", children);
+
+        assert_eq!(result, "<div class=\"layout\"><p>Hello World</p></div>");
+        assert!(!result.contains("<slot"));
+    }
+
+    #[test]
+    fn test_slot_with_nested_html_children() {
+        // Test slot with nested HTML
+        let component_template = "<div class=\"container\"><main><slot /></main></div>";
+        let children = "<div class=\"content\"><h1>Title</h1><p>Paragraph</p></div>";
+
+        let result = component_template
+            .replace("<slot />", children)
+            .replace("<slot></slot>", children);
+
+        assert_eq!(result, "<div class=\"container\"><main><div class=\"content\"><h1>Title</h1><p>Paragraph</p></div></main></div>");
+        assert!(!result.contains("<slot"));
+    }
+
+    #[test]
+    fn test_slot_self_closing_vs_block_syntax() {
+        // Test both <slot /> and <slot></slot>
+        let template1 = "<div><slot /></div>";
+        let template2 = "<div><slot></slot></div>";
+        let children = "<span>Child</span>";
+
+        let result1 = template1
+            .replace("<slot />", children)
+            .replace("<slot></slot>", children);
+
+        let result2 = template2
+            .replace("<slot />", children)
+            .replace("<slot></slot>", children);
+
+        assert_eq!(result1, "<div><span>Child</span></div>");
+        assert_eq!(result2, "<div><span>Child</span></div>");
+    }
+
+    #[test]
+    fn test_component_with_children_generates_correct_html() {
+        let template = r#"<script>
+    prop titulo = "Default"
+</script>
+
+<div class="card">
+    <h2>{titulo}</h2>
+    <slot />
+</div>
+
+<style>
+    card:
+        background: #333
+        padding: 1rem
+    h2:
+        color: gold
+</style>"#;
+
+        let result = parse_component(template);
+        assert!(result.is_ok());
+        let (_, component) = result.unwrap();
+
+        // Verify template contains <slot />
+        assert!(
+            component.template.contains("<slot />") || component.template.contains("<slot></slot>")
+        );
+
+        // Test slot replacement
+        let children = "<p>Card content</p>";
+        let rendered = component
+            .template
+            .replace("<slot />", children)
+            .replace("<slot></slot>", children);
+
+        assert!(rendered.contains("<p>Card content</p>"));
+        assert!(!rendered.contains("<slot"));
+    }
+
+    #[test]
+    fn test_nested_component_slot_resolution() {
+        // Test resolving components that have slots
+        let mut components = std::collections::HashMap::new();
+
+        components.insert(
+            "Layout".to_string(),
+            Component {
+                template: "<div class=\"layout\"><nav>Nav</nav><main><slot /></main></div>"
+                    .to_string(),
+                script: vec![],
+                style: "".to_string(),
+                file_path: "Layout.nini".to_string(),
+            },
+        );
+
+        let template = "<Layout><p>Page content</p></Layout>";
+        // Need to provide imports for the component to be resolved
+        let imports = vec![("components/Layout.nini".to_string(), "Layout".to_string())];
+
+        let result = resolve_components_in_template(template, &imports, &components);
+
+        // Debug output
+        println!("Result: {}", result);
+
+        // Should not contain <Layout> tags
+        assert!(
+            !result.contains("<Layout>"),
+            "Result should not contain <Layout>, but got: {}",
+            result
+        );
+        assert!(
+            !result.contains("</Layout>"),
+            "Result should not contain </Layout>"
+        );
+
+        // Should contain the slot content
+        assert!(
+            result.contains("<p>Page content</p>"),
+            "Result should contain slot content"
+        );
+
+        // Should contain the layout structure (layout class is present)
+        assert!(
+            result.contains("layout"),
+            "Result should contain layout class"
+        );
+        assert!(
+            result.contains("<nav>Nav</nav>"),
+            "Result should contain nav"
+        );
+        assert!(
+            result.contains("<slot />") == false,
+            "Result should not contain <slot />"
+        );
     }
 }

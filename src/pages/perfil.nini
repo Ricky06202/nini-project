@@ -1,0 +1,30 @@
+<script>
+    import "../components/Layout.nini" as Layout
+    import "../components/Card.nini" as Card
+    
+    nombre = "Usuario Nini"
+    email = "usuario@nini.dev"
+</script>
+
+<Layout>
+    <div class="perfil">
+        <h1>Mi Perfil</h1>
+        
+        <div class="info">
+            <Card titulo="Mi Nombre" descripcion="usuario@nini.dev" />
+        </div>
+        
+        <p>Esta es la página de perfil</p>
+    </div>
+</Layout>
+
+<style>
+    perfil:
+        padding: 2rem
+    h1:
+        color: gold
+    info:
+        margin: 2rem 0
+    p:
+        color: #888
+</style>

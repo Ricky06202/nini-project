@@ -1,13 +1,12 @@
 // El motor de reactividad de Nini
 export const nini = {
     currentEffect: null,
-    // Crea un valor que "avisa" cuando cambia
+    
     signal(initialValue) {
         let value = initialValue;
         const subscribers = new Set();
         return {
             get value() {
-                // Registrar el effect actual si existe
                 if (nini.currentEffect) {
                     subscribers.add(nini.currentEffect);
                 }
@@ -16,7 +15,6 @@ export const nini = {
             set value(newValue) {
                 if (value !== newValue) {
                     value = newValue;
-                    // Ejecutar todos los suscriptores (effects)
                     subscribers.forEach(subscriber => subscriber());
                 }
             },
@@ -26,12 +24,14 @@ export const nini = {
             }
         };
     },
+    
     _currentInstance: null,
+    
     setCurrentInstance(instance) {
         nini._currentInstance = instance;
     },
+    
     prop(name, defaultValue) {
-        // Si hay una instancia activa, buscar solo en esa
         if (nini._currentInstance) {
             const comp = document.querySelector(`.comp[data-instance="${nini._currentInstance}"]`);
             if (comp) {
@@ -43,17 +43,76 @@ export const nini = {
         }
         return defaultValue;
     },
-    // Crea un effect que se re-ejecuta cuando cambian las signals a las que accede
+    
     effect(fn) {
         const effectFn = () => {
             nini.currentEffect = effectFn;
             fn();
             nini.currentEffect = null;
         };
-        // Ejecutar inmediatamente para suscribirse a las signals
         effectFn();
     },
+    
     updateDOM() {
-        console.log("Nini detectó un cambio y está actualizando la UI...");
+        console.log("Nini detectó un cambio y actualizando UI...");
     }
 };
+
+// Router de Nini - intercepta clics y maneja historial
+class NiniRouter {
+    constructor() {
+        this.currentRoute = null;
+        this.init();
+    }
+    
+    init() {
+        document.addEventListener('click', (e) => {
+            const link = e.target.closest('[data-nini-link]');
+            if (link) {
+                e.preventDefault();
+                const href = link.getAttribute('href');
+                this.navigate(href);
+            }
+        });
+        
+        window.addEventListener('popstate', () => {
+            this.loadRoute(window.location.pathname);
+        });
+        
+        this.loadRoute(window.location.pathname);
+    }
+    
+    async navigate(path) {
+        window.history.pushState({}, '', path);
+        await this.loadRoute(path);
+    }
+    
+    async loadRoute(path) {
+        const route = window.NINI_ROUTES?.[path];
+        
+        if (!route) {
+            console.warn('Ruta no encontrada:', path);
+            return;
+        }
+        
+        this.currentRoute = path;
+        
+        try {
+            const module = await import(route.js);
+            console.log('Cargado:', route.page);
+        } catch (err) {
+            console.error('Error al cargar página:', err);
+        }
+    }
+}
+
+// Auto-inicializar cuando el DOM esté listo
+if (typeof window !== 'undefined') {
+    window.addEventListener('DOMContentLoaded', () => {
+        if (!window.niniRouter) {
+            window.niniRouter = new NiniRouter();
+        }
+    });
+}
+
+export { NiniRouter };

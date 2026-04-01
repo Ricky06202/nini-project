@@ -1,0 +1,33 @@
+<script>
+    import "../components/Layout.nini" as Layout
+    
+    titulo = "Acerca de Nini"
+    descripcion = "Nini es un framework minimalista creado con Rust"
+</script>
+
+<Layout>
+    <div class="about">
+        <h1>{titulo}</h1>
+        <p>{descripcion}</p>
+        
+        <ul>
+            <li>Compilador en Rust</li>
+            <li>Reactividad signals</li>
+            <li>Scoped CSS</li>
+            <li>SPA Router</li>
+        </ul>
+    </div>
+</Layout>
+
+<style>
+    about:
+        padding: 2rem
+    h1:
+        color: gold
+    p:
+        color: #888
+        font-size: 1.2rem
+    li:
+        color: #ccc
+        margin: 0.5rem 0
+</style>
