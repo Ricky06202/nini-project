@@ -1,0 +1,9 @@
+<script>
+service ApiService
+    prop baseUrl = "https://api.example.com"
+    
+    fn obtener_datos()
+        return fetch(this.baseUrl + "/data")
+</script>
+
+<div></div>

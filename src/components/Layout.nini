@@ -7,6 +7,7 @@
         <Link to="/">Inicio</Link>
         <Link to="/perfil">Perfil</Link>
         <Link to="/acerca">Acerca</Link>
+        <Link to="/demo">Demo</Link>
     </nav>
     <main>
         <slot />

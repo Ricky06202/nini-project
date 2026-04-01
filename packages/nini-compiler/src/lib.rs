@@ -14,6 +14,14 @@ pub enum NiniNode {
         name: String,
         members: Vec<NiniNode>,
     },
+    Service {
+        name: String,
+        members: Vec<NiniNode>,
+    },
+    Inject {
+        service_name: String,
+        variable_name: String,
+    },
     HtmlElement {
         tag: String,
         attributes: Vec<(String, String)>,
@@ -192,6 +200,24 @@ pub fn parse_class(input: &str) -> IResult<&str, NiniNode> {
     ))
 }
 
+// Parser para un Servicio: service NombreServicio
+pub fn parse_service(input: &str) -> IResult<&str, NiniNode> {
+    let (input, _) = tag("service ")(input)?;
+    let (input, name) = alpha1(input)?;
+    let (input, _) = line_ending(input)?;
+
+    // Parsear miembros (props y functions)
+    let (input, members) = many0(alt((parse_variable, parse_function, parse_html_element)))(input)?;
+
+    Ok((
+        input,
+        NiniNode::Service {
+            name: name.to_string(),
+            members,
+        },
+    ))
+}
+
 // Parser para imports: import "./Component.nini" as ComponentName
 fn parse_import(input: &str) -> IResult<&str, NiniNode> {
     let (input, _) = tag("import ")(input)?;
@@ -217,10 +243,37 @@ fn parse_import(input: &str) -> IResult<&str, NiniNode> {
     ))
 }
 
-// Parser para un constructo (variable, clase o import)
+// Parser para inject: var_name = inject ServiceName
+fn parse_inject(input: &str) -> IResult<&str, NiniNode> {
+    let (input, _) = multispace0(input)?;
+    let (input, var_name) = alpha1(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("=")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = tag("inject")(input)?;
+    let (input, _) = space1(input)?;
+    let (input, service_name) = alpha1(input)?;
+    let (input, _) = line_ending(input)?;
+
+    Ok((
+        input,
+        NiniNode::Inject {
+            service_name: service_name.to_string(),
+            variable_name: var_name.to_string(),
+        },
+    ))
+}
+
+// Parser para un constructo (variable, clase, service, inject o import)
 fn parse_construct(input: &str) -> IResult<&str, NiniNode> {
     let (input, _) = multispace0(input)?;
-    alt((parse_import, parse_variable, parse_class))(input)
+    alt((
+        parse_import,
+        parse_inject,
+        parse_service,
+        parse_variable,
+        parse_class,
+    ))(input)
 }
 
 // Parser para un archivo completo (formato antiguo)
@@ -610,16 +663,101 @@ pub fn generate_component_js(
 
     // NO generar vars de componentes aquí - se generan después del innerHTML
 
-    // Generar código para el script (variables, clases, etc.)
+    // Generar código para el script (variables, clases, servicios, etc.)
+    // Primero procesar servicios para crear singleton registry
+    let mut services_generated = false;
+    for node in &component.script {
+        if let NiniNode::Service { .. } = node {
+            if !services_generated {
+                js_code.push_str("// Service Singleton Registry\n");
+                js_code.push_str("const __services = {};\n\n");
+                services_generated = true;
+            }
+            break;
+        }
+    }
+
     for node in &component.script {
         match node {
             NiniNode::Variable { name, value } => {
+                // Detectar tipo de valor
                 let js_value = if value.parse::<f64>().is_ok() {
                     value.to_string()
+                } else if value == "true" || value == "false" {
+                    value.clone()
+                } else if value.starts_with('[') || value.starts_with('{') {
+                    value.clone()
                 } else {
                     format!("\"{}\"", value)
                 };
-                js_code.push_str(&format!("const {} = nini.signal({});\n", name, js_value));
+                // Crear signal y hacer global
+                js_code.push_str(&format!(
+                    "window._{name} = nini.signal({js_value});\n",
+                    name = name,
+                    js_value = js_value
+                ));
+                js_code.push_str(&format!(
+                    "Object.defineProperty(window, '{name}', {{\n",
+                    name = name
+                ));
+                js_code.push_str(&format!(
+                    "    get() {{ return window._{name}.value; }},\n",
+                    name = name
+                ));
+                js_code.push_str(&format!(
+                    "    set(v) {{ window._{name}.value = v; }}\n",
+                    name = name
+                ));
+                js_code.push_str("});\n");
+            }
+            NiniNode::Service { name, members } => {
+                js_code.push_str(&format!("class {} {{\n", name));
+                // Constructor
+                js_code.push_str("  constructor() {\n");
+                for member in members {
+                    if let NiniNode::Variable {
+                        name: prop_name,
+                        value,
+                    } = member
+                    {
+                        let js_value = if value.parse::<f64>().is_ok() {
+                            value.to_string()
+                        } else {
+                            format!("\"{}\"", value)
+                        };
+                        js_code.push_str(&format!("    this.{} = {};\n", prop_name, js_value));
+                    }
+                }
+                js_code.push_str("  }\n");
+                // Methods
+                for member in members {
+                    if let NiniNode::Function { name, body } = member {
+                        js_code.push_str(&format!("  {}() {{\n", name));
+                        for expr_node in body {
+                            if let NiniNode::Expression(expr) = expr_node {
+                                js_code.push_str(&format!("    {};\n", expr));
+                            }
+                        }
+                        js_code.push_str("  }\n");
+                    }
+                }
+                js_code.push_str("}\n");
+                // Singleton getter
+                js_code.push_str(&format!("function get{}() {{\n", name));
+                js_code.push_str(&format!("  if (!__services['{}']) {{\n", name));
+                js_code.push_str(&format!("    __services['{}'] = new {}();\n", name, name));
+                js_code.push_str("  }\n");
+                js_code.push_str(&format!("  return __services['{}'];\n", name));
+                js_code.push_str("}\n\n");
+            }
+            NiniNode::Inject {
+                service_name,
+                variable_name,
+            } => {
+                js_code.push_str(&format!(
+                    "const {} = get{}();\n",
+                    variable_name, service_name
+                ));
             }
             NiniNode::Class { name, members } => {
                 js_code.push_str(&format!("class {} {{\n", name));
@@ -641,6 +779,16 @@ pub fn generate_component_js(
                 js_code.push_str("}\n");
             }
             NiniNode::Import { .. } => {}
+            NiniNode::Function { name, body } if name == "init" => {
+                // init() becomes nini.onMount()
+                js_code.push_str("nini.onMount(() => {\n");
+                for expr_node in body {
+                    if let NiniNode::Expression(expr) = expr_node {
+                        js_code.push_str(&format!("    {};\n", expr));
+                    }
+                }
+                js_code.push_str("});\n");
+            }
             _ => {}
         }
     }
@@ -671,19 +819,50 @@ pub fn generate_component_js(
         })
         .collect();
 
-    // Crear efectos para las expresiones
-    let parts = parse_template(&resolved_template);
+    // Crear efectos para las expresiones (solo fuera de data-nini-for)
+    let parts = parse_template(&template_html);
     let mut effect_counter = 0;
+
+    // Contar expresiones que están dentro de data-nini-for para saltarlas
+    let mut for_expr_positions = std::collections::HashSet::new();
+
+    // Buscar spans dentro de data-nini-for de manera simple
+    let mut pos = 0;
+    while let Some(for_start) = template_html[pos..].find("data-nini-for=") {
+        let abs_start = pos + for_start;
+        // Encontrar el cierre del div
+        if let Some(div_close) = template_html[abs_start..].find("</div>") {
+            let abs_close = abs_start + div_close + 6; // +6 for </div>
+            let block = &template_html[abs_start..abs_close];
+
+            // Encontrar spans en este bloque
+            let span_re = regex::Regex::new(r#"id="(nini-expr-\d+)""#).unwrap();
+            for span_cap in span_re.captures_iter(block) {
+                if let Some(span_id) = span_cap.get(1) {
+                    for_expr_positions.insert(span_id.as_str().to_string());
+                }
+            }
+
+            pos = abs_close;
+        } else {
+            break;
+        }
+    }
 
     for part in parts {
         if let TemplatePart::Expression(expr) = part {
             effect_counter += 1;
             let span_id = format!("nini-expr-{}", effect_counter);
 
-            // Si es variable del app, usar signal. Si no, leer del DOM
+            // Saltar expresiones dentro de data-nini-for (ya manejadas por foreach handler)
+            if for_expr_positions.contains(&span_id) {
+                continue;
+            }
+
+            // Si es variable del app, usar signal interno para suscripción
             if app_var_names.contains(&expr.to_string()) {
                 js_code.push_str(&format!(
-                    "nini.effect(() => {{\n    const el = document.getElementById('{}');\n    if (el) el.textContent = {}.value;\n}});\n",
+                    "nini.effect(() => {{\n    const el = document.getElementById('{}');\n    if (el) el.textContent = window._{}.value;\n}});\n",
                     span_id, expr
                 ));
             } else {
@@ -713,6 +892,48 @@ pub fn generate_component_js(
             }
         }
     }
+
+    // Manejar directiva data-nini-if (mostrar/ocultar según condición)
+    js_code.push_str("\n// Handle nini-if directives\n");
+    js_code.push_str("document.querySelectorAll('[data-nini-if]').forEach(el => {\n");
+    js_code.push_str("    const condition = el.getAttribute('data-nini-if');\n");
+    js_code.push_str(
+        "    // Convertir nombre de variable a signal interno: mostrar -> window._mostrar.value\n",
+    );
+    js_code.push_str("    const signalCondition = condition.replace(/\\b(\\w+)\\b/g, (m) => window['_' + m] !== undefined ? 'window._' + m + '.value' : m);\n");
+    js_code.push_str("    nini.effect(() => {\n");
+    js_code.push_str("        const show = eval(signalCondition);\n");
+    js_code.push_str("        el.style.display = show ? '' : 'none';\n");
+    js_code.push_str("    });\n");
+    js_code.push_str("});\n\n");
+
+    // Manejar directiva data-nini-for (renderizar lista)
+    js_code.push_str("// Handle nini-for directives\n");
+    js_code.push_str("document.querySelectorAll('[data-nini-for]').forEach(template => {\n");
+    js_code.push_str("    const forExpr = template.getAttribute('data-nini-for');\n");
+    js_code.push_str("    const match = forExpr.match(/(\\w+)\\s+in\\s+(\\w+)/);\n");
+    js_code.push_str("    if (!match) return;\n");
+    js_code.push_str("    const [, itemName, listName] = match;\n");
+    js_code.push_str("    const parent = template.parentNode;\n");
+    js_code.push_str("    // Ocultar el template original\n");
+    js_code.push_str("    template.style.display = 'none';\n");
+    js_code.push_str("    \n");
+    js_code.push_str("    nini.effect(() => {\n");
+    js_code.push_str("        const list = window['_' + listName]?.value || [];\n");
+    js_code.push_str("        // Remove old items\n");
+    js_code.push_str("        parent.querySelectorAll(`[data-nini-for-item=\"${listName}\"]`).forEach(el => el.remove());\n");
+    js_code.push_str("        // Add new items\n");
+    js_code.push_str("        list.forEach((item, index) => {\n");
+    js_code.push_str("            const clone = template.cloneNode(true);\n");
+    js_code.push_str("            clone.style.display = '';\n");
+    js_code.push_str("            clone.removeAttribute('data-nini-for');\n");
+    js_code.push_str("            clone.setAttribute('data-nini-for-item', listName);\n");
+    js_code.push_str("            clone.innerHTML = clone.innerHTML.replace(new RegExp(`\\\\{\\\\s*${itemName}\\\\s*\\\\}`, 'g'), item);\n");
+    js_code.push_str("            clone.innerHTML = clone.innerHTML.replace(new RegExp(`\\\\b${itemName}\\\\b`, 'g'), item);\n");
+    js_code.push_str("            parent.insertBefore(clone, template);\n");
+    js_code.push_str("        });\n");
+    js_code.push_str("    });\n");
+    js_code.push_str("});\n\n");
 
     // Generar CSS scoped (incluir CSS de componentes hijos)
     let mut all_css = generate_scoped_css(&parse_style(&component.style), scope_class);
@@ -751,14 +972,17 @@ fn get_default_value_from_component(
             for node in &comp.script {
                 if let NiniNode::Variable { name, value } = node {
                     if name == expr {
-                        return format!("\"{}\"", value);
+                        // Escapar comillas dobles en el valor
+                        let escaped = value.replace('"', "\\\"");
+                        return format!("\"{}\"", escaped);
                     }
                 }
             }
         }
     }
-    // Default si no se encuentra
-    format!("\"{}\"", expr)
+    // Default si no se encuentra - escapar comillas
+    let escaped = expr.replace('"', "\\\"");
+    format!("\"{}\"", escaped)
 }
 
 fn generate_component_vars_simple(component: &Component) -> String {
@@ -1136,6 +1360,24 @@ fn resolve_components_in_template(
     result
 }
 
+// Find closing brace position accounting for nested braces
+fn find_matching_brace(s: &str) -> Option<usize> {
+    let mut depth = 1; // Start at 1 since opening brace was already consumed
+    for (i, c) in s.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 // Transforma el template HTML reemplazando {expr} con spans con IDs únicas.
 fn transform_template(template: &str, scope_class: &str) -> String {
     // First transform Link components
@@ -1165,6 +1407,89 @@ fn transform_template(template: &str, scope_class: &str) -> String {
         break;
     }
 
+    // Transform @if (condition) { ... } to data-nini-if (Blazor style)
+    let mut directive_counter = 0;
+
+    while let Some(if_start) = result.find("@if (") {
+        if let Some(if_end_paren) = result[if_start..].find(") {") {
+            let condition_start = if_start + 5; // after "@if ("
+            let condition = result[condition_start..if_start + if_end_paren]
+                .trim()
+                .to_string();
+
+            // Find matching }
+            let content_start = if_start + if_end_paren + 3; // after ") {"
+            if let Some(if_close) = find_matching_brace(&result[content_start..]) {
+                let content = result[content_start..content_start + if_close]
+                    .trim()
+                    .to_string();
+                directive_counter += 1;
+
+                let replacement = format!(
+                    r#"<div data-nini-if="{}" data-nini-if-id="{}" style="display:none">{}</div>"#,
+                    condition, directive_counter, content
+                );
+
+                let full_end = content_start + if_close + 1; // +1 for "}"
+                result = format!(
+                    "{}{}{}",
+                    &result[..if_start],
+                    replacement,
+                    &result[full_end..]
+                );
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    // Transform @foreach (var item in items) { ... } to data-nini-for (Blazor style)
+    while let Some(each_start) = result.find("@foreach (") {
+        if let Some(each_end_paren) = result[each_start..].find(") {") {
+            let expr_start = each_start + 10; // after "@foreach ("
+            let expr = result[expr_start..each_start + each_end_paren]
+                .trim()
+                .to_string();
+
+            // Parse "var item in items" or "item in items"
+            let expr_clean = expr.trim_start_matches("var ");
+            if let Some((item_name, list_expr)) = expr_clean.split_once(" in ") {
+                let item_name = item_name.trim().to_string();
+                let list_name = list_expr.trim().to_string();
+
+                // Find matching }
+                let content_start = each_start + each_end_paren + 3; // after ") {"
+                if let Some(each_close) = find_matching_brace(&result[content_start..]) {
+                    let content = result[content_start..content_start + each_close]
+                        .trim()
+                        .to_string();
+                    directive_counter += 1;
+
+                    let replacement = format!(
+                        r#"<div data-nini-for="{} in {}" data-nini-for-id="{}">{}</div>"#,
+                        item_name, list_name, directive_counter, content
+                    );
+
+                    let full_end = content_start + each_close + 1; // +1 for "}"
+                    result = format!(
+                        "{}{}{}",
+                        &result[..each_start],
+                        replacement,
+                        &result[full_end..]
+                    );
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
     // Now transform expressions {expr} -> <span>
     let mut result_final = String::new();
     let mut current = result.as_str();
@@ -1179,7 +1504,7 @@ fn transform_template(template: &str, scope_class: &str) -> String {
                 expr_counter += 1;
                 let expr = &current[start + 1..start + end];
                 let span = format!(
-                    r#"<span id="nini-expr-{}">{{{}.value}}</span>"#,
+                    r#"<span id="nini-expr-{}">{{{}}}</span>"#,
                     expr_counter,
                     expr.trim()
                 );
@@ -1209,12 +1534,40 @@ pub fn generate_js(nodes: &[NiniNode]) -> String {
     for node in nodes {
         match node {
             NiniNode::Variable { name, value } => {
-                let js_value = if value.parse::<f64>().is_ok() {
-                    value.to_string()
+                // Detectar tipo de valor - limpiar cualquier whitespace
+                let clean: &str = &value.trim();
+
+                let js_value = if clean == "true" {
+                    "true".to_string()
+                } else if clean == "false" {
+                    "false".to_string()
+                } else if let Ok(_) = clean.parse::<f64>() {
+                    clean.to_string()
+                } else if clean.starts_with('[') || clean.starts_with('{') {
+                    clean.to_string()
                 } else {
-                    format!("\"{}\"", value)
+                    format!("\"{}\"", clean)
                 };
-                js_code.push_str(&format!("const {} = nini.signal({});\n", name, js_value));
+
+                // Crear signal y variable con getter/setter implícito
+                js_code.push_str(&format!(
+                    "let _{name} = nini.signal({js_value});\n",
+                    name = name,
+                    js_value = js_value
+                ));
+                js_code.push_str(&format!(
+                    "Object.defineProperty(window, '{name}', {{\n",
+                    name = name
+                ));
+                js_code.push_str(&format!(
+                    "    get() {{ return _{name}.value; }},\n",
+                    name = name
+                ));
+                js_code.push_str(&format!(
+                    "    set(v) {{ _{name}.value = v; }}\n",
+                    name = name
+                ));
+                js_code.push_str("});\n");
             }
             NiniNode::Class { name, members } => {
                 js_code.push_str(&format!("class {} {{\n", name));

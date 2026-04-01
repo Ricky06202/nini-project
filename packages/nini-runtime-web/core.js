@@ -98,7 +98,11 @@ class NiniRouter {
         this.currentRoute = path;
         
         try {
-            const module = await import(route.js);
+            if (route.render) {
+                route.render();
+            } else if (route.js) {
+                await import(route.js);
+            }
             console.log('Cargado:', route.page);
         } catch (err) {
             console.error('Error al cargar página:', err);
