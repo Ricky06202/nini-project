@@ -127,10 +127,45 @@ Los estilos solo aplican al componente actual - no hay fugas CSS.
 | Plataforma | Estado | Descripción |
 |------------|--------|-------------|
 | Web | ✅ Soportado | SPA completa con router integrado |
-| Escritorio | 🔜 Próximamente | Via Tauri/Electron |
-| Android | 🔜 Próximamente | Via WebView nativo |
-| iOS | ❌ No soportado | Apple no permite engines alternativas |
-| macOS | ❌ No soportado | Limitaciones de Apple |
+| Windows | 🔜 Próximamente (Via Tauri v2) | App nativa de escritorio |
+| Linux | 🔜 Próximamente (Via Tauri v2) | App nativa (Fedora, Ubuntu, etc.) |
+| macOS | 🔜 Próximamente (Via Tauri v2) | App nativa de escritorio |
+| Android | 🔜 Próximamente (Via Tauri v2) | App nativa móvil |
+| iOS | 🔜 Próximamente (Via Tauri v2) | App nativa móvil |
+
+### Plugins Nativos (Tauri v2)
+
+Nini aprovechará el ecosistema de plugins de Tauri v2 para acceder a funcionalidades nativas del dispositivo:
+
+| Plugin | Funcionalidad |
+|--------|---------------|
+| `tauri-plugin-camera` | Acceso a cámara frontal/trasera |
+| `tauri-plugin-geolocation` | GPS y geolocalización |
+| `tauri-plugin-notification` | Notificaciones push locales |
+| `tauri-plugin-file-system` | Lectura/escritura de archivos |
+| `tauri-plugin-barcode` | Escaneo de códigos QR/Barcode |
+| `tauri-plugin-biometric` | Autenticación biométrica |
+| `tauri-plugin-nfc` | Lectura NFC (Android) |
+
+```nini
+<!-- Uso futuro de plugins nativos -->
+<script>
+    import "@tauri-plugin-camera" as Camera
+    import "@tauri-plugin-geolocation" as Geo
+    
+    photo = ""
+    ubicacion = ""
+    
+    fn tomar_foto()
+        photo = Camera.capture()
+    
+    fn obtener_ubicacion()
+        ubicacion = Geo.getCurrentPosition()
+</script>
+
+<button onclick="tomar_foto()">📸 Tomar Foto</button>
+<button onclick="obtener_ubicacion()">📍 Mi Ubicación</button>
+```
 
 ## Instalación
 
@@ -333,27 +368,51 @@ service AuthService
 - [ ] Lazy loading de rutas
 - [ ] Compresión Brot/Gzip
 
-### Fase 14: Desktop (Tauri)
-- [ ] Integración con Tauri
-- [ ] APIs nativas (file system, notifications)
-- [ ] Auto-update
+### Fase 14: Ecosistema Nativo (Tauri v2)
 
-### Fase 15: Mobile (Android)
-- [ ] WebView wrapper nativo
-- [ ] APIs nativas (camera, GPS, etc.)
+Despliegue simultáneo multiplataforma desde una sola codebase Nini:
+
+**Escritorio:**
+- [ ] Integración con Tauri v2
+- [ ] Build nativo para Windows, Linux (Fedora/Ubuntu) y macOS
+- [ ] Auto-update integrado
+- [ ] Trays, menús nativos y ventanas múltiples
+
+**Móvil:**
+- [ ] Build nativo para Android e iOS
+- [ ] WebView optimizado
+- [ ] Navegación gestual nativa
 - [ ] Push notifications
 
-### Fase 16: SSR y SSG
+**Plugins Nativos (Tauri v2 Ecosystem):**
+- [ ] `@tauri-plugin-camera` - Acceso cámara trasera/frontal
+- [ ] `@tauri-plugin-geolocation` - GPS y mapas
+- [ ] `@tauri-plugin-notification` - Notificaciones push locales
+- [ ] `@tauri-plugin-file-system` - Acceso completo al file system
+- [ ] `@tauri-plugin-barcode` - Escaneo QR y códigos de barras
+- [ ] `@tauri-plugin-biometric` - Huella dactilar y FaceID
+- [ ] `@tauri-plugin-nfc` - Lectura NFC (Android)
+
+**Build targets desde una sola codebase:**
+```
+nini build --target windows    # .exe
+nini build --target linux      # .deb / .AppImage
+nini build --target macos      # .dmg
+nini build --target android    # .apk
+nini build --target ios        # .ipa
+```
+
+### Fase 15: SSR y SSG
 - [ ] Server-Side Rendering
 - [ ] Static Site Generation
 - [ ] Incremental regeneration
 
-### Fase 17: Testing
+### Fase 16: Testing
 - [ ] Testing utils integrados
 - [ ] Snapshot testing
 - [ ] E2E testing helpers
 
-### Fase 18: Component Library
+### Fase 17: Component Library
 - [ ] UI Kit oficial (buttons, forms, modals)
 - [ ] Temas pre-configurados
 - [ ] Accessible components
