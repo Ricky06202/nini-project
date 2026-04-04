@@ -3,4 +3,6 @@ resolver = "3"
 members = [
     "packages/nini-compiler",
     "packages/nini-cli",
+    "src-tauri",
 ]
+default-members = ["packages/nini-cli"]

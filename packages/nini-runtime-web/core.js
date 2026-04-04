@@ -181,7 +181,11 @@ class NiniRouter {
         });
         
         window.addEventListener('popstate', () => {
-            this.loadRoute(window.location.pathname);
+        // Cargar ruta inicial - normalize for Tauri
+        let path = window.location.pathname;
+        // Tauri uses /index.html, normalize to /
+        path = path.replace(/\/index\.html$/, '').replace(/\/$/, '') || '/';
+        this.loadRoute(path);
         });
         
         this.loadRoute(window.location.pathname);
@@ -220,11 +224,18 @@ if (typeof window !== 'undefined') {
     // Ensure window.nini exists before any page code runs
     window.nini = window.nini || { stores: {}, currentEffect: null };
     
-    window.addEventListener('DOMContentLoaded', () => {
+    const initRouter = () => {
         if (!window.niniRouter) {
             window.niniRouter = new NiniRouter();
         }
-    });
+    };
+    
+    if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', initRouter);
+    } else {
+        // DOM already loaded, init immediately
+        initRouter();
+    }
 }
 
 export { NiniRouter };

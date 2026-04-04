@@ -1,0 +1,30 @@
+{
+  "productName": "Nini",
+  "version": "0.1.0",
+  "identifier": "com.nini.app",
+  "build": {
+    "frontendDist": "../dist",
+    "beforeDevCommand": "cargo run --release -- build demo --no-server",
+    "beforeBuildCommand": "cargo run --release -- build demo --no-server"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Nini App",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}

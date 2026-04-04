@@ -22,7 +22,31 @@ const HTML_TEMPLATE: &str = r#"
     <div id="nini-app">
         <h1>Cargando Nini...</h1>
     </div>
-    <script type="module" src="./bundle.js"></script>
+    <script>
+        // Debug: check if bundle loaded
+        console.log("HTML loaded");
+        window.addEventListener('error', (e) => {
+            document.getElementById('nini-app').innerHTML = '<h1 style="color:red">Error: ' + e.message + '</h1><pre>File: ' + e.filename + '\nLine: ' + e.lineno + '\n\n' + (e.error?.stack || '') + '</pre>';
+        });
+    </script>
+    <script src="./bundle.js"></script>
+    <script>
+        // Debug: check what happened
+        var status = '';
+        if (typeof nini === 'undefined') status += 'nini: undefined\n';
+        else status += 'nini: OK\n';
+        if (typeof NiniRouter === 'undefined') status += 'NiniRouter: undefined\n';
+        else status += 'NiniRouter: OK\n';
+        if (!window.niniRouter) status += 'window.niniRouter: not set\n';
+        else status += 'window.niniRouter: OK\n';
+        if (window.NINI_ROUTES) status += 'NINI_ROUTES: ' + Object.keys(window.NINI_ROUTES).join(', ') + '\n';
+        else status += 'NINI_ROUTES: undefined\n';
+        
+        var appEl = document.getElementById('nini-app');
+        if (appEl.innerHTML.includes('Cargando Nini')) {
+            appEl.innerHTML = '<h1 style="color:orange">Still loading...</h1><pre>' + status + '</pre>';
+        }
+    </script>
 </body>
 </html>
 "#;
@@ -53,6 +77,7 @@ fn compile_page(page_path: &Path, base_dir: &str, page_name: &str) -> Option<(St
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let modo = args.get(1).map(|s| s.as_str()).unwrap_or("dev");
+    let no_server = args.iter().any(|a| a == "--no-server" || a == "--tauri");
 
     println!("🧭 Nini Router - Modo: {}", modo);
 
@@ -179,6 +204,11 @@ fn main() {
     println!("   - JS: dist/bundle.js");
     println!("   - HTML: dist/index.html");
 
+    if no_server {
+        println!("\n✅ Build completado (sin servidor)");
+        return;
+    }
+
     // Iniciar servidor
     let server = Server::http("0.0.0.0:8080").unwrap();
     println!("\n🌐 Servidor en http://localhost:8080");
@@ -231,7 +261,27 @@ fn main() {
 fn generate_router_js(routes: &[(String, String, String)]) -> String {
     let mut js = String::new();
 
-    js.push_str("import { nini } from './nini-runtime-web/core.js';\n\n");
+    // Inline the Nini runtime (no ES modules for Tauri compatibility)
+    let runtime_paths = [
+        "packages/nini-runtime-web/core.js",
+        "../packages/nini-runtime-web/core.js",
+    ];
+    for path in &runtime_paths {
+        if let Ok(runtime_content) = std::fs::read_to_string(path) {
+            // Strip all ES module exports
+            let runtime_global = runtime_content
+                .replace("export const nini", "const nini")
+                .replace("export const", "const")
+                .replace("export { NiniRouter };", "")
+                .replace("export {", "// export {");
+            js.push_str(&runtime_global);
+            js.push_str("\n\n");
+            break;
+        }
+    }
+
+    js.push_str("const log = nini.log.bind(nini);\n");
+    js.push_str("const onChange = nini.onChange.bind(nini);\n\n");
 
     // Route map - embeber todo el JS de páginas directamente
     js.push_str("window.NINI_ROUTES = {\n");
@@ -253,70 +303,8 @@ fn generate_router_js(routes: &[(String, String, String)]) -> String {
     }
     js.push_str("};\n\n");
 
-    // Router class
-    js.push_str(
-        r#"
-class NiniRouter {
-    constructor() {
-        this.currentRoute = null;
-        this.init();
-    }
-    
-    init() {
-        // Interceptar clics en enlaces
-        document.addEventListener('click', (e) => {
-            const link = e.target.closest('[data-nini-link]');
-            console.log('🖱️ Click detectado:', e.target, link);
-            if (link) {
-                e.preventDefault();
-                const href = link.getAttribute('href');
-                console.log('🧭 Navegando a:', href);
-                this.navigate(href);
-            }
-        });
-        
-        // Manejar botón atrás/adelante
-        window.addEventListener('popstate', () => {
-            this.loadRoute(window.location.pathname);
-        });
-        
-        // Cargar ruta inicial
-        this.loadRoute(window.location.pathname);
-    }
-    
-    async navigate(path) {
-        window.history.pushState({}, '', path);
-        await this.loadRoute(path);
-    }
-    
-    async loadRoute(path) {
-        const route = window.NINI_ROUTES?.[path];
-        
-        console.log('📍 Cargando ruta:', path);
-        
-        if (!route) {
-            console.warn('Ruta no encontrada:', path);
-            return;
-        }
-        
-        // Ejecutar la función render embebida
-        if (route.render) {
-            route.render();
-            console.log('✅ Página renderizada:', route.page);
-            this.currentRoute = path;
-        }
-    }
-}
-
-// Inicializar router inmediatamente
-try {
-    console.log('🚀 Nini Router inicializado');
-    window.niniRouter = new NiniRouter();
-} catch (e) {
-    console.error('❌ Error al inicializar router:', e);
-}
-"#,
-    );
+    // NiniRouter auto-initializes from runtime on DOMContentLoaded
+    // No need to manually initialize here
 
     js
 }

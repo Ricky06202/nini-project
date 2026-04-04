@@ -23,6 +23,8 @@
 <div class="demo">
     <h1>Global Stores</h1>
     
+    <button onclick="alert('onclick works!')">Test onclick</button>
+    
     <div class="store-demo">
         <h3>Carrito Store</h3>
         <p>Productos: {productos}</p>

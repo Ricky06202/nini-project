@@ -826,8 +826,9 @@ pub fn generate_component_js(
         })
         .collect();
 
-    // Importar el runtime de Nini
-    js_code.push_str("import { nini } from './nini-runtime-web/core.js';\n\n");
+    // Nini runtime is inlined in the bundle (main.rs), NOT here
+    // Pages are embedded as render functions in the bundle
+    js_code.push_str("// Page JS (runtime provided by bundle)\n\n");
 
     // Hacer log y onChange disponibles globalmente
     js_code.push_str("const log = nini.log.bind(nini);\n");
