@@ -2,20 +2,71 @@
     contador = 0
     mostrar = true
     items = ["Rust", "Blazor", "Nini"]
+    texto = "Hola Nini"
+    busqueda = ""
+    cambios = 0
+    ultimo_cambio = "-"
+    
+    store Carrito
+        productos = ["Pan", "Leche"]
+        total = 100
+    end
+    
+    fn init()
+        log("Demo mounted!")
+    end
+    
+    onChange([contador, texto], () => {
+        cambios = cambios + 1
+        ultimo_cambio = "contador=" + contador + " texto=" + texto
+    })
 </script>
 
 <div class="demo">
-    <h1>Directivas Blazor</h1>
+    <h1>Global Stores</h1>
     
-    <p>Contador: {contador}</p>
+    <div class="store-demo">
+        <h3>Carrito Store</h3>
+        <p>Productos: {productos}</p>
+        <p>Total: ${total}</p>
+        <button onclick="productos = ['Manzana', 'Naranja']; total = 50">Cambiar Productos</button>
+        <button onclick="total = total + 10">+10 al total</button>
+    </div>
+    
+    <hr/>
+    
+    <h3>Contador</h3>
+    <p>Valor: {contador}</p>
     <button onclick="contador++">+1</button>
+    <button onclick="contador = 0">Reset</button>
     
+    <hr/>
+    
+    <h3>onChange en acción</h3>
+    <div class="change-tracker">
+        <p>Cambios detectados: <strong>{cambios}</strong></p>
+        <p>Último cambio: <em>{ultimo_cambio}</em></p>
+    </div>
+    
+    <hr/>
+    
+    <h3>Two-Way Binding</h3>
+    <div class="form">
+        <input type="text" bind={texto} placeholder="Escribe algo..." />
+        <p>Escribiste: {texto}</p>
+    </div>
+    
+    <hr/>
+    
+    <h3>Toggle</h3>
+    <button onclick="mostrar = !mostrar">Toggle Panel</button>
     @if (mostrar) {
         <p class="panel">Panel visible</p>
     }
     
-    <button onclick="mostrar = !mostrar">Toggle</button>
+    <hr/>
     
+    <h3>Lista</h3>
     @foreach (var item in items) {
         <p class="item">{item}</p>
     }
@@ -44,4 +95,31 @@
         padding: 0.5rem
         margin: 0.25rem 0
         border-radius: 4px
+    store-demo:
+        background: #1a1a1a
+        padding: 1rem
+        border-radius: 8px
+        margin-bottom: 1rem
+    busqueda:
+        padding: 0.5rem
+        border: 1px solid #444
+        border-radius: 4px
+        background: #333
+        color: white
+        width: 100%
+    form:
+        margin-top: 2rem
+        padding: 1rem
+        background: #1a1a1a
+        border-radius: 8px
+    h3:
+        color: gold
+    input:
+        padding: 0.5rem
+        border: 1px solid #444
+        border-radius: 4px
+        background: #333
+        color: white
+        width: 100%
+        margin-bottom: 0.5rem
 </style>
