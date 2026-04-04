@@ -147,24 +147,40 @@ fn parse_function(input: &str) -> IResult<&str, NiniNode> {
         input
     };
 
-    // Intentar parsear cuerpo (múltiples líneas hasta "end")
+    // Parsear cuerpo por indentación (estilo Python)
     let mut body = Vec::new();
     let mut remaining = input;
 
-    while !remaining.is_empty() {
-        let trimmed = remaining.trim_start();
-        if trimmed.starts_with("end") || trimmed.starts_with("end\n") {
-            remaining = trimmed.strip_prefix("end").unwrap_or(remaining);
-            break;
-        }
+    // Find the indentation level of the first non-empty line
+    let indent_level = remaining
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .unwrap_or(0);
 
+    while !remaining.is_empty() {
         if let Some(newline_pos) = remaining.find('\n') {
-            let line = remaining[..newline_pos].trim();
-            if !line.is_empty() {
-                body.push(NiniNode::Expression(line.to_string()));
+            let line = &remaining[..newline_pos];
+            let trimmed = line.trim();
+
+            if !trimmed.is_empty() {
+                let line_indent = line.len() - line.trim_start().len();
+                // If line is not indented more than the block level, we're done
+                if line_indent <= indent_level {
+                    break;
+                }
+                body.push(NiniNode::Expression(trimmed.to_string()));
             }
             remaining = &remaining[newline_pos + 1..];
         } else {
+            // Last line
+            let trimmed = remaining.trim();
+            if !trimmed.is_empty() {
+                let line_indent = remaining.len() - remaining.trim_start().len();
+                if line_indent > indent_level {
+                    body.push(NiniNode::Expression(trimmed.to_string()));
+                }
+            }
             break;
         }
     }
@@ -254,32 +270,42 @@ pub fn parse_store(input: &str) -> IResult<&str, NiniNode> {
     eprintln!("parse_store: INPUT = {:?}", &input[..input.len().min(60)]);
     let (input, _) = tag("store ")(input)?;
     let (input, name) = alpha1(input)?;
-    eprintln!("parse_store: name = '{}'", name);
-    let (input, _) = line_ending(input)?;
+    let (input, _) = multispace0(input)?;
 
-    // Parsear miembros (variables y funciones) - permitir whitespace antes
-    let (input, members) = many0(alt((
-        |i| {
-            let (i, _) = multispace0(i)?;
-            parse_variable(i)
-        },
-        |i| {
-            let (i, _) = multispace0(i)?;
-            parse_function(i)
-        },
-        parse_html_element,
-    )))(input)?;
+    // Support both styles: store Nombre { ... } and store Nombre\n  ...\nend
+    let input = if input.starts_with('{') {
+        &input[1..]
+    } else {
+        input
+    };
+    let (input, _) = multispace0(input)?;
+    let input = if input.starts_with('\n') || input.starts_with("\r\n") {
+        if let Some(pos) = input.find('\n') {
+            &input[pos + 1..]
+        } else {
+            input
+        }
+    } else {
+        input
+    };
+
+    // Parsear miembros (solo variables) - permitir whitespace antes
+    let (input, members) = many0(|i| {
+        let (i, _) = multispace0(i)?;
+        parse_variable(i)
+    })(input)?;
     eprintln!("parse_store: parsed {} members", members.len());
     for m in &members {
         eprintln!("  member: {:?}", m);
     }
 
-    // Consume "end" if present
+    // Consume "}" or "end" if present
     let input = input.trim_start();
     let input = if input.starts_with("end") {
         &input[3..]
+    } else if input.starts_with("}") {
+        &input[1..]
     } else {
-        eprintln!("parse_store: WARNING - no 'end' keyword found");
         input
     };
 

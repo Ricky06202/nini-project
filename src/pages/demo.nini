@@ -10,11 +10,9 @@
     store Carrito
         productos = ["Pan", "Leche"]
         total = 100
-    end
     
     fn init()
         log("Demo mounted!")
-    end
     
     onChange([contador, texto], () => {
         cambios = cambios + 1
